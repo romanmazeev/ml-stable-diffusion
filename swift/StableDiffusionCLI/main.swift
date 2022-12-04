@@ -70,25 +70,25 @@ struct StableDiffusionSample: ParsableCommand {
                                                    configuration: config,
                                                    disableSafety: disableSafety)
 
-        log("Sampling ...\n")
-        let sampleTimer = SampleTimer()
-        sampleTimer.start()
-
-        let images = try pipeline.generateImages(
-            prompt: prompt,
-            imageCount: imageCount,
-            stepCount: stepCount,
-            seed: seed
-        ) { progress in
-            sampleTimer.stop()
-            handleProgress(progress,sampleTimer)
-            if progress.stepCount != progress.step {
-                sampleTimer.start()
-            }
-            return true
-        }
-
-        _ = try saveImages(images, logNames: true)
+//        log("Sampling ...\n")
+//        let sampleTimer = SampleTimer()
+//        sampleTimer.start()
+//
+//        let images = try pipeline.generateImages(
+//            prompt: prompt,
+//            imageCount: imageCount,
+//            stepCount: stepCount,
+//            seed: seed
+//        ) { progress in
+//            sampleTimer.stop()
+//            handleProgress(progress,sampleTimer)
+//            if progress.stepCount != progress.step {
+//                sampleTimer.start()
+//            }
+//            return true
+//        }
+//
+//        _ = try saveImages(images, logNames: true)
     }
 
     func handleProgress(
