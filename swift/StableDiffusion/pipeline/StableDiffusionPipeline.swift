@@ -72,69 +72,71 @@ public struct StableDiffusionPipeline {
         disableSafety: Bool = false
     ) -> AsyncThrowingStream<Progress, Error> {
         return AsyncThrowingStream { continuation in
-            do {
-                // Encode the input prompt as well as a blank unconditioned input
-                let promptEmbedding = try textEncoder.encode(prompt)
-                let blankEmbedding = try textEncoder.encode("")
-
-                // Convert to Unet hidden state representation
-                let concatEmbedding = MLShapedArray<Float32>(
-                    concatenating: [blankEmbedding, promptEmbedding],
-                    alongAxis: 0
-                )
-
-                let hiddenStates = toHiddenStates(concatEmbedding)
-
-                /// Setup schedulers
-                let scheduler = (0..<imageCount).map { _ in Scheduler(stepCount: stepCount) }
-                let stdev = scheduler[0].initNoiseSigma
-
-                // Generate random latent samples from specified seed
-                var latents = generateLatentSamples(imageCount, stdev: stdev, seed: seed)
-
-                // De-noising loop
-                for (step,t) in scheduler[0].timeSteps.enumerated() {
-                    // Expand the latents for classifier-free guidance
-                    // and input to the Unet noise prediction model
-                    let latentUnetInput = latents.map {
-                        MLShapedArray<Float32>(concatenating: [$0, $0], alongAxis: 0)
-                    }
-
-                    // Predict noise residuals from latent samples
-                    // and current time step conditioned on hidden states
-                    var noise = try unet.predictNoise(
-                        latents: latentUnetInput,
-                        timeStep: t,
-                        hiddenStates: hiddenStates
+            Task {
+                do {
+                    // Encode the input prompt as well as a blank unconditioned input
+                    let promptEmbedding = try textEncoder.encode(prompt)
+                    let blankEmbedding = try textEncoder.encode("")
+                    
+                    // Convert to Unet hidden state representation
+                    let concatEmbedding = MLShapedArray<Float32>(
+                        concatenating: [blankEmbedding, promptEmbedding],
+                        alongAxis: 0
                     )
-
-                    noise = performGuidance(noise)
-
-                    // Have the scheduler compute the previous (t-1) latent
-                    // sample given the predicted noise and current sample
-                    for i in 0..<imageCount {
-                        latents[i] = scheduler[i].step(
-                            output: noise[i],
+                    
+                    let hiddenStates = toHiddenStates(concatEmbedding)
+                    
+                    /// Setup schedulers
+                    let scheduler = (0..<imageCount).map { _ in Scheduler(stepCount: stepCount) }
+                    let stdev = scheduler[0].initNoiseSigma
+                    
+                    // Generate random latent samples from specified seed
+                    var latents = generateLatentSamples(imageCount, stdev: stdev, seed: seed)
+                    
+                    // De-noising loop
+                    for (step,t) in scheduler[0].timeSteps.enumerated() {
+                        // Expand the latents for classifier-free guidance
+                        // and input to the Unet noise prediction model
+                        let latentUnetInput = latents.map {
+                            MLShapedArray<Float32>(concatenating: [$0, $0], alongAxis: 0)
+                        }
+                        
+                        // Predict noise residuals from latent samples
+                        // and current time step conditioned on hidden states
+                        var noise = try unet.predictNoise(
+                            latents: latentUnetInput,
                             timeStep: t,
-                            sample: latents[i]
+                            hiddenStates: hiddenStates
                         )
+                        
+                        noise = performGuidance(noise)
+                        
+                        // Have the scheduler compute the previous (t-1) latent
+                        // sample given the predicted noise and current sample
+                        for i in 0..<imageCount {
+                            latents[i] = scheduler[i].step(
+                                output: noise[i],
+                                timeStep: t,
+                                sample: latents[i]
+                            )
+                        }
+                        
+                        Task { [latents] in
+                            continuation.yield(Progress(
+                                pipeline: self,
+                                prompt: prompt,
+                                step: step,
+                                stepCount: stepCount,
+                                currentLatentSamples: latents,
+                                isSafetyEnabled: canSafetyCheck && !disableSafety
+                            ))
+                        }
                     }
-
-                    Task { [latents] in
-                        continuation.yield(Progress(
-                            pipeline: self,
-                            prompt: prompt,
-                            step: step,
-                            stepCount: stepCount,
-                            currentLatentSamples: latents,
-                            isSafetyEnabled: canSafetyCheck && !disableSafety
-                        ))
-                    }
+                    
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
-
-                continuation.finish()
-            } catch {
-                continuation.finish(throwing: error)
             }
         }
     }
